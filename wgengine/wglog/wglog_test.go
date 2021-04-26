@@ -18,9 +18,9 @@ func TestLogger(t *testing.T) {
 		want string
 		omit bool
 	}{
-		{"hi", "hi", false},
+		{"hi", "<RATELIMITED>hi", false},
 		{"Routine: starting", "", true},
-		{"peer(IMTB…r7lM) says it misses you", "[IMTBr] says it misses you", false},
+		{"peer(IMTB…r7lM) says it misses you", "<RATELIMITED>[IMTBr] says it misses you", false},
 	}
 
 	c := make(chan string, 1)

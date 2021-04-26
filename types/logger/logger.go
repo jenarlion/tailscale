@@ -15,6 +15,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -75,6 +76,8 @@ func RateLimitedFn(logf Logf, f time.Duration, burst int, maxCache int) Logf {
 	return RateLimitedFnWithTime(logf, f, burst, maxCache, time.Now)
 }
 
+const rateLimitedPrefix = "<RATELIMITED>"
+
 // RateLimitedFnWithTime returns a rate-limiting Logf wrapping the given
 // logf. Messages are allowed through at a maximum of one message every f
 // (where f is a time.Duration), in bursts of up to burst messages at a
@@ -86,12 +89,26 @@ func RateLimitedFnWithTime(logf Logf, f time.Duration, burst int, maxCache int, 
 		return logf
 	}
 	var (
-		mu       sync.Mutex
-		msgLim   = make(map[string]*limitData) // keyed by logf format
-		msgCache = list.New()                  // a rudimentary LRU that limits the size of the map
+		mu        sync.Mutex
+		msgLim    = make(map[string]*limitData) // keyed by logf format
+		msgCache  = list.New()                  // a rudimentary LRU that limits the size of the map
+		badFormat bool
 	)
 
 	return func(format string, args ...interface{}) {
+		// Formats that have already been rate limited, do not
+		// need to be rate limited again.
+		if strings.HasPrefix(format, rateLimitedPrefix) {
+			logf(format[len(rateLimitedPrefix):], args...)
+			return
+		}
+
+		if !badFormat && (format == "%s" || format == "%v") {
+			badFormat = true
+			logf("[RATELIMIT] bad format(%q) trace:\n%v",
+				format, string(debug.Stack()))
+		}
+
 		// Shortcut for formats with no rate limit
 		for _, sub := range rateFree {
 			if strings.Contains(format, sub) {

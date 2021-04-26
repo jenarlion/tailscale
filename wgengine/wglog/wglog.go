@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/tailscale/wireguard-go/device"
 	"tailscale.com/types/logger"
@@ -29,7 +30,11 @@ type Logger struct {
 func NewLogger(logf logger.Logf) *Logger {
 	ret := new(Logger)
 
-	wrapper := func(format string, args ...interface{}) {
+	unlimitLogf := func(format string, args ...interface{}) {
+		logf("<RATELIMITED>"+format, args...)
+	}
+
+	fixup := func(format string, args ...interface{}) {
 		msg := fmt.Sprintf(format, args...)
 		if strings.Contains(msg, "Routine:") && !strings.Contains(msg, "receive incoming") {
 			// wireguard-go logs as it starts and stops routines.
@@ -48,25 +53,31 @@ func NewLogger(logf logger.Logf) *Logger {
 		r := ret.replacer.Load()
 		if r == nil {
 			// No replacements specified; log as originally planned.
-			logf(format, args...)
+			unlimitLogf(format, args...)
 			return
 		}
 		// Do the replacements.
 		new := r.(*strings.Replacer).Replace(msg)
 		if new == msg {
 			// No replacements. Log as originally planned.
-			logf(format, args...)
+			unlimitLogf(format, args...)
 			return
 		}
 		// We made some replacements. Log the new version.
 		// This changes the format string,
 		// which is somewhat unfortunate as it impacts rate limiting,
 		// but there's not much we can do about that.
-		logf("%s", new)
+		unlimitLogf("%s", new)
 	}
+
+	// Idea: We could actually get fancier here. For example, we could
+	// check each wireguard logline for a nodekey prefix, and rate
+	// limit based on the nodekey rather than the specific message.
+	rlogf := logger.RateLimitedFn(fixup, 5*time.Second, 5, 100)
+
 	ret.DeviceLogger = &device.Logger{
-		Verbosef: logger.WithPrefix(wrapper, "[v2] "),
-		Errorf:   wrapper,
+		Verbosef: logger.WithPrefix(rlogf, "[v2] "),
+		Errorf:   rlogf,
 	}
 	return ret
 }
