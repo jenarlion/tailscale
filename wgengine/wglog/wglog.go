@@ -7,7 +7,6 @@ package wglog
 
 import (
 	"encoding/base64"
-	"fmt"
 	"strings"
 	"sync/atomic"
 
@@ -20,7 +19,7 @@ import (
 // It can be modified at run time to adjust to new wireguard-go configurations.
 type Logger struct {
 	DeviceLogger *device.Logger
-	replacer     atomic.Value // of *strings.Replacer
+	replace      atomic.Value // of map[string]string
 }
 
 // NewLogger creates a new logger for use with wireguard-go.
@@ -43,25 +42,26 @@ func NewLogger(logf logger.Logf) *Logger {
 			// See https://github.com/tailscale/tailscale/issues/1388.
 			return
 		}
-		msg := fmt.Sprintf(format, args...)
-		r := ret.replacer.Load()
-		if r == nil {
+		replace, _ := ret.replace.Load().(map[string]string)
+		if replace == nil {
 			// No replacements specified; log as originally planned.
 			logf(format, args...)
 			return
 		}
 		// Do the replacements.
-		new := r.(*strings.Replacer).Replace(msg)
-		if new == msg {
-			// No replacements. Log as originally planned.
-			logf(format, args...)
-			return
+		for i, arg := range args {
+			peer, ok := arg.(*device.Peer)
+			if !ok {
+				continue
+			}
+			wgStr := peer.String()
+			tsStr, ok := replace[wgStr]
+			if !ok {
+				continue
+			}
+			args[i] = tsStr
 		}
-		// We made some replacements. Log the new version.
-		// This changes the format string,
-		// which is somewhat unfortunate as it impacts rate limiting,
-		// but there's not much we can do about that.
-		logf("%s", new)
+		logf(format, args...)
 	}
 	ret.DeviceLogger = &device.Logger{
 		Verbosef: logger.WithPrefix(wrapper, "[v2] "),
@@ -74,14 +74,13 @@ func NewLogger(logf logger.Logf) *Logger {
 // SetPeers is safe for concurrent use.
 func (x *Logger) SetPeers(peers []wgcfg.Peer) {
 	// Construct a new peer public key log rewriter.
-	var replace []string
+	replace := make(map[string]string)
 	for _, peer := range peers {
 		old := "peer(" + wireguardGoString(peer.PublicKey) + ")"
 		new := peer.PublicKey.ShortString()
-		replace = append(replace, old, new)
+		replace[old] = new
 	}
-	r := strings.NewReplacer(replace...)
-	x.replacer.Store(r)
+	x.replace.Store(replace)
 }
 
 // wireguardGoString prints p in the same format used by wireguard-go.

@@ -20,7 +20,6 @@ func TestLogger(t *testing.T) {
 	}{
 		{"hi", "hi", false},
 		{"Routine: starting", "", true},
-		{"peer(IMTB…r7lM) says it misses you", "[IMTBr] says it misses you", false},
 	}
 
 	c := make(chan string, 1)
